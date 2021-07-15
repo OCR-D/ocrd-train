@@ -358,20 +358,6 @@ def generate_font_image(ctx, font, exposure, char_spacing):
         *ctx.text2image_extra_args,
     )
 
-    check_file_readable(str(outbase) + ".box", str(outbase) + ".tif")
-
-    if ctx.extract_font_properties and pathlib.Path(ctx.train_ngrams_file).exists():
-        log.info(f"Extracting font properties of {font}")
-        run_command(
-            "text2image",
-            *common_args,
-            f"--font={font}",
-            f"--ligatures=false",
-            f"--text={ctx.train_ngrams_file}",
-            f"--only_extract_font_properties",
-            f"--ptsize=32",
-        )
-        check_file_readable(str(outbase) + ".fontinfo")
     return f"{font}-{exposure}"
 
 
@@ -385,24 +371,6 @@ def phase_I_generate_image(ctx, par_factor=None):
     char_spacing = 0.0
 
     for exposure in ctx.exposures:
-        if ctx.extract_font_properties and pathlib.Path(ctx.bigram_freqs_file).exists():
-            # Parse .bigram_freqs file and compose a .train_ngrams file with text
-            # for tesseract to recognize during training. Take only the ngrams whose
-            # combined weight accounts for 95% of all the bigrams in the language.
-            lines = pathlib.Path(ctx.bigram_freqs_file).read_text(encoding="utf-8").split("\n")
-            records = (line.split() for line in lines)
-            p = 0.99
-            ngram_frac = p * sum(int(rec[1]) for rec in records if len(rec) >= 2)
-
-            with pathlib.Path(ctx.train_ngrams_file).open("w", encoding="utf-8") as f:
-                cumsum = 0
-                for bigram, count in sorted(records, key=itemgetter(1), reverse=True):
-                    if cumsum > ngram_frac:
-                        break
-                    f.write(bigram + " ")
-                    cumsum += count
-
-            check_file_readable(ctx.train_ngrams_file)
 
         with tqdm(
                 total=len(ctx.fonts)
@@ -459,81 +427,9 @@ def phase_UP_generate_unicharset(ctx):
     check_file_readable(ctx.xheights_file)
 
 
-# # Phase D : Generate (D)awg files from unicharset file and wordlist files
-# phase_D_generate_dawg() {
-#     tlog "\n=== Phase D: Generating Dawg files ==="
-
-#     # Skip if requested
-#     if [[ ${GENERATE_DAWGS} -eq 0 ]]; then
-#       tlog "Skipping ${phase_name}"
-#       return
-#     fi
-
-#     # Output files
-#     WORD_DAWG=${TRAINING_DIR}/${LANG_CODE}.word-dawg
-#     FREQ_DAWG=${TRAINING_DIR}/${LANG_CODE}.freq-dawg
-#     PUNC_DAWG=${TRAINING_DIR}/${LANG_CODE}.punc-dawg
-#     NUMBER_DAWG=${TRAINING_DIR}/${LANG_CODE}.number-dawg
-#     BIGRAM_DAWG=${TRAINING_DIR}/${LANG_CODE}.bigram-dawg
-
-#     # Word DAWG
-#     local freq_wordlist_file=${TRAINING_DIR}/${LANG_CODE}.wordlist.clean.freq
-#     if [[ -s ${WORDLIST_FILE} ]]; then
-#         tlog "Generating word Dawg"
-#         check_file_readable ${unicharset_file}
-#         run_command wordlist2dawg -r 1 ${WORDLIST_FILE} ${WORD_DAWG} \
-#             ${UNICHARSET_FILE}
-#         check_file_readable ${WORD_DAWG}
-
-#         FREQ_DAWG_SIZE=100
-#         head -n ${FREQ_DAWG_SIZE} ${WORDLIST_FILE} > ${freq_wordlist_file}
-#     fi
-
-#     # Freq-word DAWG
-#     if [[ -s ${freq_wordlist_file} ]]; then
-#         check_file_readable ${UNICHARSET_FILE}
-#         tlog "Generating frequent-word Dawg"
-#         run_command wordlist2dawg  -r 1 ${freq_wordlist_file} \
-#             ${FREQ_DAWG} ${UNICHARSET_FILE}
-#         check_file_readable ${FREQ_DAWG}
-#     fi
-
-#     # Punctuation DAWG
-#     # -r arguments to wordlist2dawg denote RTL reverse policy
-#     # (see Trie::RTLReversePolicy enum in tesseract/src/dict/trie.h).
-#     # We specify 0/RRP_DO_NO_REVERSE when generating number DAWG,
-#     # 1/RRP_REVERSE_IF_HAS_RTL for freq and word DAWGS,
-#     # 2/RRP_FORCE_REVERSE for the punctuation DAWG.
-#     local punc_reverse_policy=0;
-#     if [[ "${LANG_IS_RTL}" == "1" ]]; then
-#       punc_reverse_policy=2
-#     fi
-#     if [[ ! -s ${PUNC_FILE} ]]; then
-#         PUNC_FILE="{ctx.langdata_dir}/common.punc"
-#     fi
-#     check_file_readable ${PUNC_FILE}
-#     run_command wordlist2dawg -r ${punc_reverse_policy} \
-#         ${PUNC_FILE} ${PUNC_DAWG} ${UNICHARSET_FILE}
-#     check_file_readable ${PUNC_DAWG}
-
-#     # Numbers DAWG
-#     if [[ -s ${NUMBERS_FILE} ]]; then
-#         run_command wordlist2dawg -r 0 \
-#             ${NUMBERS_FILE} ${NUMBER_DAWG} ${UNICHARSET_FILE}
-#         check_file_readable ${NUMBER_DAWG}
-#     fi
-
-#     # Bigram dawg
-#     if [[ -s ${WORD_BIGRAMS_FILE} ]]; then
-#         run_command wordlist2dawg -r 1 \
-#             ${WORD_BIGRAMS_FILE} ${BIGRAM_DAWG} ${UNICHARSET_FILE}
-#         check_file_readable ${BIGRAM_DAWG}
-#     fi
-# }
-
-# Phase E : (E)xtract .tr feature files from .tif/.box files
+# Phase E : (E)xtract .lstmf  files from .tif/.box files
 def phase_E_extract_features(ctx, box_config, ext):
-    log.info(f"=== Phase E: Generating {ext} files ===")
+    log.info(f"=== Phase E: Generating {ext} files using {box_config}===")
 
     img_files = list(pathlib.Path(ctx.training_dir).glob("*.exp*.tif"))
     log.debug(img_files)
@@ -578,86 +474,6 @@ def phase_E_extract_features(ctx, box_config, ext):
         check_file_readable(pathlib.Path(img_file.with_suffix("." + ext)))
 
     return
-
-
-# # Phase C : (C)luster feature prototypes in .tr into normproto file (cnTraining)
-# # phaseC_cluster_prototypes ${TRAINING_DIR}/${LANG_CODE}.normproto
-# phase_C_cluster_prototypes() {
-#     tlog "\n=== Phase C: Clustering feature prototypes (cnTraining) ==="
-#     local out_normproto=$1
-
-#     run_command cntraining -D "${TRAINING_DIR}/" \
-#         $(ls ${TRAINING_DIR}/*.tr)
-
-#     check_file_readable ${TRAINING_DIR}/normproto
-#     mv ${TRAINING_DIR}/normproto ${out_normproto}
-# }
-
-# # Phase S : (S)hape clustering
-# phase_S_cluster_shapes() {
-#     if ((! RUN_SHAPE_CLUSTERING)); then
-#         tlog "\n=== Shape Clustering disabled ==="
-#         return
-#     fi
-#     check_file_readable {ctx.langdata_dir}/font_properties
-#     local font_props="-F {ctx.langdata_dir}/font_properties"
-#     if [[ -r ${TRAINING_DIR}/${LANG_CODE}.xheights ]] &&\
-#        [[ -s ${TRAINING_DIR}/${LANG_CODE}.xheights ]]; then
-#         font_props=${font_props}" -X ${TRAINING_DIR}/${LANG_CODE}.xheights"
-#     fi
-
-#     run_command shapeclustering \
-#         -D "${TRAINING_DIR}/" \
-#         -U ${TRAINING_DIR}/${LANG_CODE}.unicharset \
-#         -O ${TRAINING_DIR}/${LANG_CODE}.mfunicharset \
-#         ${font_props} \
-#         $(ls ${TRAINING_DIR}/*.tr)
-#     check_file_readable ${TRAINING_DIR}/shapetable \
-#         ${TRAINING_DIR}/${LANG_CODE}.mfunicharset
-# }
-
-# # Phase M : Clustering microfeatures (mfTraining)
-# phase_M_cluster_microfeatures() {
-#     tlog "\n=== Phase M : Clustering microfeatures (mfTraining) ==="
-
-#     check_file_readable {ctx.langdata_dir}/font_properties
-#     font_props="-F {ctx.langdata_dir}/font_properties"
-#     if [[ -r ${TRAINING_DIR}/${LANG_CODE}.xheights ]] && \
-#        [[ -s ${TRAINING_DIR}/${LANG_CODE}.xheights ]]; then
-#         font_props=${font_props}" -X ${TRAINING_DIR}/${LANG_CODE}.xheights"
-#     fi
-
-#     run_command mftraining \
-#         -D "${TRAINING_DIR}/" \
-#         -U ${TRAINING_DIR}/${LANG_CODE}.unicharset \
-#         -O ${TRAINING_DIR}/${LANG_CODE}.mfunicharset \
-#         ${font_props} \
-#         $(ls ${TRAINING_DIR}/*.tr)
-#     check_file_readable ${TRAINING_DIR}/inttemp ${TRAINING_DIR}/shapetable \
-#         ${TRAINING_DIR}/pffmtable ${TRAINING_DIR}/${LANG_CODE}.mfunicharset
-#     mv ${TRAINING_DIR}/inttemp ${TRAINING_DIR}/${LANG_CODE}.inttemp
-#     mv ${TRAINING_DIR}/shapetable ${TRAINING_DIR}/${LANG_CODE}.shapetable
-#     mv ${TRAINING_DIR}/pffmtable ${TRAINING_DIR}/${LANG_CODE}.pffmtable
-#     mv ${TRAINING_DIR}/${LANG_CODE}.mfunicharset ${TRAINING_DIR}/${LANG_CODE}.unicharset
-# }
-
-# phase_B_generate_ambiguities() {
-#   tlog "\n=== Phase B : ambiguities training ==="
-
-#   # Check for manually created ambiguities data.
-#   if [[ -r {ctx.langdata_dir}/${LANG_CODE}/${LANG_CODE}.unicharambigs ]]; then
-#       tlog "Found file {ctx.langdata_dir}/${LANG_CODE}/${LANG_CODE}.unicharambigs"
-#       cp {ctx.langdata_dir}/${LANG_CODE}/${LANG_CODE}.unicharambigs \
-#           ${TRAINING_DIR}/${LANG_CODE}.unicharambigs
-#       # Make it writable, as it may be read-only in the client.
-#       chmod u+w ${TRAINING_DIR}/${LANG_CODE}.unicharambigs
-#       return
-#   else
-#       tlog "No unicharambigs file found!"
-#   fi
-
-#   # TODO: Add support for generating ambiguities automatically.
-# }
 
 
 def make_lstmdata(ctx):
@@ -711,35 +527,3 @@ def make_lstmdata(ctx):
     dir_listing = (str(p) for p in path_output.glob(f"{ctx.lang_code}.*.lstmf"))
     with pathlib.Path(lstm_list).open(mode="w", encoding="utf-8", newline="\n") as f:
         f.write("\n".join(dir_listing))
-
-# make__traineddata() {
-#   tlog "\n=== Making final traineddata file ==="
-#   local lang_prefix={ctx.langdata_dir}/${LANG_CODE}/${LANG_CODE}
-
-#   # Combine available files for this language from the langdata dir.
-#   if [[ -r ${lang_prefix}.config ]]; then
-#     tlog "Copying ${lang_prefix}.config to ${TRAINING_DIR}"
-#     cp ${lang_prefix}.config ${TRAINING_DIR}
-#     chmod u+w ${TRAINING_DIR}/${LANG_CODE}.config
-#   fi
-#   if [[ -r ${lang_prefix}.params-model ]]; then
-#     tlog "Copying ${lang_prefix}.params-model to ${TRAINING_DIR}"
-#     cp ${lang_prefix}.params-model ${TRAINING_DIR}
-#     chmod u+w ${TRAINING_DIR}/${LANG_CODE}.params-model
-#   fi
-
-#   # Compose the traineddata file.
-#   run_command combine_tessdata ${TRAINING_DIR}/${LANG_CODE}.
-
-#   # Copy it to the output dir, overwriting only if allowed by the cmdline flag.
-#   if [[ ! -d ${OUTPUT_DIR} ]]; then
-#       tlog "Creating new directory ${OUTPUT_DIR}"
-#       mkdir -p ${OUTPUT_DIR}
-#   fi
-#   local destfile=${OUTPUT_DIR}/${LANG_CODE}.traineddata;
-#   if [[ -f ${destfile} ]] && ((! OVERWRITE)); then
-#       err_exit "File ${destfile} exists and no --overwrite specified";
-#   fi
-#   tlog "Moving ${TRAINING_DIR}/${LANG_CODE}.traineddata to ${OUTPUT_DIR}"
-#   cp -f ${TRAINING_DIR}/${LANG_CODE}.traineddata ${destfile}
-# }
